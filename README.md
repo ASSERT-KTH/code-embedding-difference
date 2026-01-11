@@ -7,7 +7,7 @@ https://huggingface.co/datasets/ASSERT-KTH/RunBugRun-Final
 
 ## Trained models on Huggingface
 
-TODO
+https://huggingface.co/ASSERT-KTH/Buggy-to-Fixed-Code-ViT1D
 
 ## Repository Structure
 - tokenize_dataset.ipynb – Tokenizes the RunBugRun dataset that can be found on HuggingFace and saves it locally.

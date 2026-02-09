@@ -21,6 +21,8 @@ from datasets import load_dataset
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from transformers import StoppingCriteria, StoppingCriteriaList
 from sacrebleu import corpus_bleu
+import re
+from typing import List, Optional, Tuple
 
 
 # -----------------------------
@@ -40,10 +42,10 @@ DECODER_MODEL_ID = "bigcode/starcoder2-3b"
 HF_DATASET_ID = "ASSERT-KTH/RunBugRun-Final"
 INDICES_DIR = "saved_indices"
 
-MAX_LEN_FIXED = 768
+MAX_LEN_FIXED = 1024
 MAX_LEN_PROMPT_INPUT = 1280
 
-MAX_NEW_TOKENS = 512
+MAX_NEW_TOKENS = 4096
 
 BATCH_SIZE = 16
 NUM_WORKERS = 4
@@ -237,13 +239,16 @@ class PromptBaselineTestDataset(Dataset):
 # =====================
 def build_prompt(buggy_code: str, language: str) -> str:
     buggy_code = (buggy_code or "").rstrip()
+    language = (language or "").strip()
     return (
-        "<issue_start>Fix the following buggy program. Make minimal edits. "
-        "Return ONLY the complete fixed program.\n"
-        "No explanation. No markdown.\n"
-        "Append <END> on a new line after the program.\n\n"
-        f"```{language}\n{buggy_code}\n```\n"
-        "Fixed program:\n"
+        f"Your task is to fix the {language} code.\n"
+        "Here is the buggy program:\n"
+        "```\n"
+        f"{buggy_code}\n"
+        "```\n\n"
+        "Please return the fixed code delimited by a Markdown code block (triple backticks).\n\n"
+        "Here is the fixed program:\n"
+        "```\n"
     )
 
 
@@ -276,6 +281,62 @@ def clean_pred_text(pred: str) -> str:
     return s
 
 
+SPECIAL_TOKENS_RE = re.compile(r"<\|endoftext\|>|\[PAD\]|<\|pad\|>", re.IGNORECASE)
+
+STOP_MARKERS: List[str] = [
+    "<END>", "</END>",
+]
+
+def _strip_special(s: str) -> str:
+    if s is None:
+        return ""
+    return SPECIAL_TOKENS_RE.sub("", str(s)).lstrip()
+
+def _find_earliest(hay: str, needles: List[str]) -> Optional[int]:
+    best = None
+    for n in needles:
+        i = hay.find(n)
+        if i != -1 and (best is None or i < best):
+            best = i
+    return best
+
+def _extract_first_fenced_block(s: str) -> str:
+    parts = s.split("\n", 1)
+    inner = parts[1] if len(parts) == 2 else ""
+    end = inner.find("```")
+    if end != -1:
+        return inner[:end]
+    return inner
+
+def extract_code(text: str) -> Tuple[str, str]:
+    s = _strip_special(text)
+    if not s:
+        return "", "empty"
+
+    # 1) continuation starts with ``` -> extract inside first block
+    if s.startswith("```"):
+        code = _extract_first_fenced_block(s)
+        return code.strip(), "fence_wrapped"
+
+    # 2) prompt already opened ```; first ``` is closing fence
+    i = s.find("```")
+    if i != -1:
+        return s[:i].strip(), "fence_close"
+
+    # 3) triple quotes
+    j = s.find("'''")
+    if j != -1:
+        return s[:j].strip(), "triplequote_close"
+
+    # 4) stop markers
+    cut = _find_earliest(s, STOP_MARKERS)
+    if cut is not None:
+        return s[:cut].strip(), "stop_marker"
+
+    # 5) whole
+    return s.strip(), "whole"
+
+
 @torch.no_grad()
 def generate_preds_list_batch(decoder, tokenizer, buggy_texts: List[str], languages: List[str], debug: bool = False):
     B = len(buggy_texts)
@@ -290,8 +351,8 @@ def generate_preds_list_batch(decoder, tokenizer, buggy_texts: List[str], langua
     ).to(DEVICE)
 
     prompt_lens = enc.attention_mask.sum(dim=1).long()
+    input_len = enc.input_ids.shape[1]
 
-    stopping = make_end_stopping(tokenizer)
 
     gen = decoder.generate(
         input_ids=enc.input_ids,
@@ -305,7 +366,6 @@ def generate_preds_list_batch(decoder, tokenizer, buggy_texts: List[str], langua
         use_cache=True,
         pad_token_id=tokenizer.pad_token_id,
         eos_token_id=tokenizer.eos_token_id,
-        stopping_criteria=stopping,
     )
 
     if N_SAMPLES > 1:
@@ -316,20 +376,31 @@ def generate_preds_list_batch(decoder, tokenizer, buggy_texts: List[str], langua
     if debug:
         print("[DEBUG] new_tokens_len (first 5 samples):")
         for i in range(min(B, 5)):
-            cut = int(prompt_lens[i].item())
+            cut = int(input_len)
             new_len = int(gen[i, 0, cut:].numel())
             print(f"  sample{i}: {new_len}")
 
     all_preds: List[List[str]] = []
+    all_full_texts: List[List[str]] = []
+    all_continuation_texts: List[List[str]] = []
+
     for i in range(B):
-        cut = int(prompt_lens[i].item())
+        cut = int(input_len)
         preds_i: List[str] = []
+        full_i: List[str] = []
+        cont_i: List[str] = []
+
         for k in range(N_SAMPLES):
             new_ids = gen[i, k, cut:]
-            raw = tokenizer.decode(new_ids, skip_special_tokens=True)
-            pred = clean_pred_text(raw)
+            cont_txt = tokenizer.decode(new_ids, skip_special_tokens=True).strip()
+            full_txt = prompts[i] + cont_txt
+            pred = extract_code(cont_txt)
             preds_i.append(pred.strip())
+            full_i.append(full_txt)
+            cont_i.append(cont_txt)
         all_preds.append(preds_i)
+        all_full_texts.append(full_i)
+        all_continuation_texts.append(cont_i)
 
     if debug and B > 0:
         print("\n========== [DEBUG FIRST BATCH] ==========")
@@ -337,15 +408,15 @@ def generate_preds_list_batch(decoder, tokenizer, buggy_texts: List[str], langua
         print((buggy_texts[0] or "")[:300])
         print("\n[DEBUG] prompt[:800]:")
         print(prompts[0][:800])
-        print(f"\n[DEBUG] prompt_len[0]={int(prompt_lens[0].item())}  B={B}  N_SAMPLES={N_SAMPLES}")
-        raw0 = tokenizer.decode(gen[0, 0, int(prompt_lens[0].item()):], skip_special_tokens=True)
+        print(f"\n[DEBUG] prompt_len[0]={int(prompt_lens[0].item())}  input_len(padded)={int(input_len)}  B={B}  N_SAMPLES={N_SAMPLES}")
+        raw0 = tokenizer.decode(gen[0, 0, int(input_len):], skip_special_tokens=True)
         print("\n[DEBUG] raw_pred0 (candidate0)[:800]:")
         print((raw0 or "")[:800])
         print("\n[DEBUG] cleaned_pred0[:800]:")
         print((all_preds[0][0] or "")[:800])
         print("=========================================\n")
 
-    return all_preds
+    return all_preds, all_full_texts, all_continuation_texts
 
 
 @torch.no_grad()
@@ -369,7 +440,7 @@ def run_test_and_save(decoder, loader, tokenizer, save_jsonl_path: str):
         fixed_mask = fixed_mask.to(DEVICE, non_blocking=True)
 
         debug_now = DEBUG_PRINT_FIRST_BATCH and (not printed_debug)
-        preds_list = generate_preds_list_batch(
+        preds_list, full_texts, continuation_texts = generate_preds_list_batch(
             decoder, tokenizer,
             buggy_texts=list(buggy_text),
             languages=list(lang),
@@ -399,6 +470,8 @@ def run_test_and_save(decoder, loader, tokenizer, save_jsonl_path: str):
                 "fixed_submission_id": int(fixed_sid[i]),
                 "language": str(lang[i]),
                 "preds": cands,
+                "full_texts": full_texts[i],
+                "continuation_texts": continuation_texts[i],
                 "gt_fixed_code": str(gt_fixed_text[i]),
             }
             f_out.write(json.dumps(rec, ensure_ascii=False) + "\n")
@@ -473,10 +546,11 @@ def main():
     ) = load_test_subset_from_saved_indices(INDICES_DIR)
 
     tokenizer = AutoTokenizer.from_pretrained(DECODER_MODEL_ID)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.padding_side = "left"
+    if (tokenizer.pad_token is None) or (tokenizer.pad_token_id == tokenizer.eos_token_id):
+        tokenizer.add_special_tokens({"pad_token": "<|pad|>"})
 
-    print("[Info] Tokenizing FIXED (for metrics)...")
+    print(f"[Tokenizer] pad_id={tokenizer.pad_token_id} eos_id={tokenizer.eos_token_id} (pad!=eos expected)")
     enc_fixed = tokenizer(
         fixed_texts,
         padding=True,
@@ -511,6 +585,7 @@ def main():
         torch_dtype=torch.bfloat16,
         low_cpu_mem_usage=True
     ).to(DEVICE)
+    decoder.resize_token_embeddings(len(tokenizer))
     decoder.eval()
     for p in decoder.parameters():
         p.requires_grad = False

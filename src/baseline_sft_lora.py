@@ -19,6 +19,8 @@ from transformers import (
     TrainerCallback,
 )
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+from logger import Logger
+import sys
 
 HF_DATASET_ID = "ASSERT-KTH/RunBugRun-Final"
 DEFAULT_MODEL_ID = "bigcode/starcoder2-3b"
@@ -285,6 +287,10 @@ def main():
         raise ValueError(f"Missing required config fields: {missing}. Please set them in YAML or pass via CLI.")
 
     os.makedirs(cfg["output_dir"], exist_ok=True)
+    if is_rank0():
+        log_path = os.path.join(cfg["output_dir"], "training_log.txt")
+        sys.stdout = Logger(log_path)
+        sys.stderr = sys.stdout
     wandb_cfg = cfg.get("wandb", {}) or {}
     wandb_enabled = bool(wandb_cfg.get("enabled", False))
     run_name = build_run_name(cfg)

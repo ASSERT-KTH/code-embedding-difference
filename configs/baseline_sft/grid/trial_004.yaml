@@ -1,0 +1,50 @@
+# configs/baseline_sft.yaml
+# Baseline LoRA SFT config for RunBugRun (StarCoder2-3B)
+
+model_id: bigcode/starcoder2-3b
+indices_dir: /path/to/indices
+output_dir: /path/to/output
+
+max_seq_len: 2048
+epochs: 4
+
+per_device_train_batch_size: 2
+per_device_eval_batch_size: 1
+gradient_accumulation_steps: 8
+
+learning_rate: 2e-4
+warmup_ratio: 0.03
+weight_decay: 0.0
+lr_scheduler_type: cosine
+
+logging_steps: 50
+eval_steps: 2000
+save_steps: 2000
+save_total_limit: 2
+
+bf16: true
+fp16: false
+gradient_checkpointing: false
+
+use_qlora: false
+lora_r: 16
+lora_alpha: 32
+lora_dropout: 0.05
+
+seed: 42
+dataloader_num_workers: 2
+
+val_small_size: 2000
+val_small_seed: 123
+
+# LoRA target modules (sweep will vary this later)
+lora_target_modules: ["q_proj", "k_proj", "v_proj", "o_proj"]
+
+# Optional: keep debug prints for module hits
+debug_lora_modules: true
+
+wandb:
+  enabled: true
+  entity: assert-kth
+  project: CodeRepair_JEPA
+  name: baseline_lora_sft_debug

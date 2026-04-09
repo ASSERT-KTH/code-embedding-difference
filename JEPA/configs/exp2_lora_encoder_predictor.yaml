@@ -1,0 +1,31 @@
+# configs/exp2_lora_encoder_predictor.yaml
+
+run:
+  run_name: exp2_lora_vit1d
+
+encoder:
+  train_mode: lora
+  lora:
+    enabled: true
+    r: 16
+    alpha: 32
+    dropout: 0.05
+
+    # IMPORTANT:
+    # 这里要填 ModernBERT / BERT-style attention 里你想注入 LoRA 的线性层名字。
+    # 不同模型命名不一样，你需要用 print(model) 或 named_modules() 确认。
+    #
+    # 常见候选（举例，不保证 ModernBERT 一定用这些名字）：
+    # - BERT/RoBERTa 风格：["query", "key", "value", "dense"]
+    # - LLaMA 风格：["q_proj", "k_proj", "v_proj", "o_proj"]
+    #
+    # 你先填一个你确认存在的列表：
+    target_modules: ["Wqkv", "Wo"]
+
+predictor:
+  name: vit1d
+
+# train:
+#   epochs: 2
+#   batch_size: 16
+#   lr: 2e-5

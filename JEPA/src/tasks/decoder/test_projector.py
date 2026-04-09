@@ -62,7 +62,7 @@ HF_FIXED_FIELD = "fixed_code"
 
 
 # =====================
-# Decoder wrapper（与你训练逻辑一致）
+# Decoder wrapper matching training.
 # =====================
 class SoftPromptStarCoderDecoder(nn.Module):
     def __init__(self, cond_dim: int, decoder_model, tokenizer, prompt_len: int = 32):

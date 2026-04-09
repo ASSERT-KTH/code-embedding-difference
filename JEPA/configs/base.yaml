@@ -4,7 +4,7 @@ seed: 42
 
 run:
   save_dir: /mimer/NOBACKUP/groups/naiss2025-5-243/youya/CodeRepair_JEPA/e2_checkpoints_jepa
-  run_name: ""   # 建议在 sbatch/array 里用 --set run.run_name=... 覆盖
+  run_name: ""   # Override with --set run.run_name=... in sbatch/array jobs.
 
 
 data:
@@ -48,7 +48,7 @@ encoder:
     alpha: 32
     dropout: 0.05
     bias: none
-    target_modules: []  # exp2 里必须填（见 exp2 文件）
+    target_modules: []  # Required for exp2. See the exp2 config.
 
 
 predictor:
@@ -93,7 +93,7 @@ train:
   weight_decay: 0.01
   log_every: 100
   save_every_epoch: false
-  eval_every_steps: 800     # 每 500 step 做一次 val + 保存 best
+  eval_every_steps: 800     # Run validation and save the best checkpoint every 500 steps.
   save_every_steps: 3000
   save_ckpt: true
   resume_strict: true 

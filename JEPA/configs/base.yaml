@@ -1,0 +1,118 @@
+# configs/base.yaml
+
+seed: 42
+
+run:
+  save_dir: /mimer/NOBACKUP/groups/naiss2025-5-243/youya/CodeRepair_JEPA/e2_checkpoints_jepa
+  run_name: ""   # Override with --set run.run_name=... in sbatch/array jobs.
+
+
+data:
+  train_subset_size: 0
+  # train_subset_seed: 42
+  # train_subset_indices_path: /mimer/NOBACKUP/groups/naiss2025-5-243/Embeddings_RBR/Decoder_RBR/JEPA/sampled_train_idx.npy
+  # val_subset_indices_path: /mimer/NOBACKUP/groups/naiss2025-5-243/Embeddings_RBR/Decoder_RBR/JEPA/diagnosis/sample_global_indices.npy
+  exp1_emb_dir: "/mimer/NOBACKUP/groups/naiss2025-5-243/Embeddings_RBR/buggy_fixed_embeddings"
+  exp1_chunk_pattern: "buggy_fixed_embeddings_chunk_{:04d}.pkl"
+  exp1_fixed_keys: ["fixed_embeddings", "fixed_emb", "fixed", "target_embeddings"]
+
+  source: hf                 # hf | jsonl  
+  hf:
+    dataset_id: "ASSERT-KTH/RunBugRun-Final"
+    split: "train"           
+    fields:
+      buggy: "buggy_code"
+      fixed: "fixed_code"
+      language: "language"   
+      problem_id: "problem_id"
+      buggy_submission_id: "buggy_submission_id"
+      fixed_submission_id: "fixed_submission_id"
+
+  indices:
+    dir: "/mimer/NOBACKUP/groups/naiss2025-5-243/Embeddings_RBR/Decoder_RBR/saved_indices"
+    global_target: "global_target_indices.npy"
+    train: "train_idx.npy"
+    val: "val_idx.npy"
+    test: "test_idx.npy"
+
+  num_workers: 4
+
+
+encoder:
+  name: answerdotai/ModernBERT-large
+  max_len: 512
+  train_mode: frozen   # frozen | full | lora
+  lora:
+    enabled: false
+    r: 16
+    alpha: 32
+    dropout: 0.05
+    bias: none
+    target_modules: []  # Required for exp2. See the exp2 config.
+
+
+predictor:
+  name: vit1d
+  vit:
+    patch: 16
+    model_dim: 256
+    layers: 4
+    heads: 8
+    mlp_ratio: 4.0
+    dropout: 0.1
+    activation: relu
+    norm_first: false
+  mlp:
+    hidden_sizes: [4096, 2048, 1024]
+    activation: relu
+    dropout: 0.0
+    use_layernorm: false
+    residual: false
+    out_layernorm: false
+
+ema:
+  tau: 0.996
+
+loss:
+  w_align: 1.0
+  w_var: 1.0
+  w_mse: 0.1
+  w_tgt_exp1: 0.1
+  align_eps: 1e-8
+  var_target_std: 1.0
+  var_eps: 1e-4
+
+train:
+  epochs: 3
+  batch_size: 16
+  grad_accum: 1
+  fp16: true
+  lr: 2e-5
+  lr_encoder: 1e-5
+  lr_predictor: 1e-4
+  weight_decay: 0.01
+  log_every: 100
+  save_every_epoch: false
+  eval_every_steps: 800     # Run validation and save the best checkpoint every 500 steps.
+  save_every_steps: 3000
+  save_ckpt: true
+  resume_strict: true 
+  # resume_from: /mimer/NOBACKUP/groups/naiss2025-5-243/youya/CodeRepair_JEPA/e2_checkpoints_jepa/r2_wmse0.01_lrE8e-5_lrP2e-4_tau0.999_r16_20260315_203434/checkpoints/ckpt_step8000.pt
+
+optim:
+  betas: [0.9, 0.999]
+  eps: 1e-8
+
+ddp:
+  enabled: true
+  backend: nccl
+  find_unused_parameters: false
+
+
+wandb:
+  enabled: true
+  resume: never 
+  entity: assert-kth
+  project: CodeRepair_JEPA
+  group: e2_encoder_vit_diagnosis
+  run_name: e2_lora_vit

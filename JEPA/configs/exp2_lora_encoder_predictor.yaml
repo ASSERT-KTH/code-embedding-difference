@@ -1,0 +1,27 @@
+# configs/exp2_lora_encoder_predictor.yaml
+
+run:
+  run_name: exp2_lora_vit1d
+
+encoder:
+  train_mode: lora
+  lora:
+    enabled: true
+    r: 16
+    alpha: 32
+    dropout: 0.05
+
+    # Set the LoRA target linear layers for this encoder.
+    # Confirm the exact names with print(model) or named_modules().
+    # Common examples:
+    # - BERT/RoBERTa style: ["query", "key", "value", "dense"]
+    # - LLaMA style: ["q_proj", "k_proj", "v_proj", "o_proj"]
+    target_modules: ["Wqkv", "Wo"]
+
+predictor:
+  name: vit1d
+
+# train:
+#   epochs: 2
+#   batch_size: 16
+#   lr: 2e-5
